@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>视频审核反馈</title>
+    <style>
+        * {margin: 20px;padding: 0;box-sizing: border-box;}
+        .container {width: 1000px;margin: 0 auto;}
+        .feedback-form {border: 1px solid #e74c3c;padding: 20px;border-radius: 8px;}
+        .form-item {margin: 15px 0;}
+        label {display: inline-block;width: 120px;font-weight: bold;}
+        select, textarea, input {width: 500px;padding: 8px;border-radius: 4px;border:1px solid #ccc;}
+        button {padding: 10px 30px;background: #e74c3c;color: white;border: none;border-radius: 4px;cursor: pointer;}
+        button:hover {background: #c0392b;}
+        #previewImg {max-width: 300px;height: auto;margin-top: 10px;display: none;}
+        .loading-spinner {
+            border: 4px solid rgba(97, 189, 249, 0.2);
+            border-top: 4px solid #61bdf9;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-left: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>⚠️ 视频审核反馈</h2>
+        <div id="videoInfo" style="margin-bottom: 20px; padding: 15px; background: #fdf2f2; border-radius: 8px;"></div>
+
+        <div class="feedback-form">
+            <h3>反馈内容</h3>
+            <div class="form-item">
+                <label>反馈理由 *</label>
+                <select id="feedbackReason" required>
+                    <option value="">请选择反馈原因</option>
+                    <option value="risk_level_error">风险等级判定错误</option>
+                    <option value="frame_desc_error">帧内容解读错误</option>
+                    <option value="missed_risk">系统遗漏风险点</option>
+                    <option value="other">其他原因</option>
+                </select>
+            </div>
+            <div class="form-item">
+                <label>详细说明 *</label>
+                <textarea id="feedbackDesc" rows="4" placeholder="请详细描述您的反馈内容..."></textarea>
+            </div>
+            <div class="form-item">
+                <label>上传证据（可选）</label>
+                <input type="file" id="uploadImg" accept="image/*" />
+                <br>
+                <img id="previewImg" alt="图片预览" />
+            </div>
+            <div class="form-item">
+                <button onclick="submitFeedback()">
+                    提交反馈
+                    <span id="submitLoading" class="loading-spinner" style="display: none;"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 从URL获取视频ID和帧索引
+        const urlParams = new URLSearchParams(window.location.search);
+        const videoId = urlParams.get('video_id');
+        const frameIndex = urlParams.get('frame_index');
+        let imgBase64 = "";
+
+        // 初始化页面信息
+        document.getElementById("videoInfo").innerHTML = `
+            <p><strong>视频ID:</strong> ${videoId || "未知"}</p>
+            ${frameIndex ? `<p><strong>反馈帧索引:</strong> ${frameIndex}</p>` : ""}
+            <p><strong>反馈类型:</strong> ${frameIndex ? "帧解读反馈" : "整体风险评估反馈"}</p>
+        `;
+
+        // 图片预览逻辑
+        document.getElementById("uploadImg").addEventListener("change", function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(res) {
+                    imgBase64 = res.target.result;
+                    document.getElementById("previewImg").src = imgBase64;
+                    document.getElementById("previewImg").style.display = "block";
+                }
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // 反馈提交函数（修复所有问题）
+        async function submitFeedback() {
+            const reason = document.getElementById("feedbackReason").value;
+            const desc = document.getElementById("feedbackDesc").value.trim();
+            const submitBtn = document.querySelector("button");
+            const loadingEl = document.getElementById("submitLoading");
+
+            // 基础校验
+            if (!reason) {
+                alert("请选择反馈理由！");
+                return;
+            }
+            if (!desc) {
+                alert("请填写详细说明！");
+                return;
+            }
+            if (!videoId) {
+                alert("视频ID缺失，无法提交反馈！");
+                return;
+            }
+
+            // 显示加载状态
+            submitBtn.disabled = true;
+            loadingEl.style.display = "inline-block";
+
+            try {
+                // 生成唯一反馈ID
+                const feedbackId = "feedback_" + new Date().getTime();
+                // 构造完整反馈数据（后端要求的所有字段）
+                const feedbackData = {
+                    feedback_id: feedbackId,
+                    video_id: videoId,
+                    frame_index: frameIndex || null,
+                    feedback_type: frameIndex ? "frame" : "video",
+                    feedback_reason: reason,
+                    feedback_desc: desc,
+                    feedback_img: imgBase64 || "",
+                    feedback_time: new Date().toLocaleString(),
+                    status: "pending" // 初始状态：待审核
+                };
+
+                // 调用后端接口
+                const res = await fetch('/submit-feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(feedbackData),
+                    timeout: 15000
+                });
+                const result = await res.json();
+
+                if (result.success) {
+                    alert("反馈提交成功！等待人工审核处理～");
+                    window.close(); // 提交成功后关闭窗口
+                } else {
+                    alert("反馈提交失败：" + (result.message || "未知错误"));
+                }
+            } catch (err) {
+                alert("网络错误：" + err.message);
+            } finally {
+                // 恢复按钮状态
+                submitBtn.disabled = false;
+                loadingEl.style.display = "none";
+            }
+        }
+    </script>
+</body>
+</html>

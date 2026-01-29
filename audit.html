@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>人工审核后台</title>
+    <style>
+        * {margin: 10px;padding: 0;box-sizing: border-box;}
+        .container {width: 1200px;margin: 0 auto;}
+        .feedback-item {border: 1px solid #ccc;padding: 15px;margin: 10px 0;border-radius: 8px;background: #f9f9f9;}
+        .pending {color: orange;font-weight: bold;font-size:16px;}
+        .completed {color: green;font-weight: bold;font-size:16px;}
+        button {padding: 8px 20px;margin-right:10px;border: none;border-radius:4px;cursor: pointer;}
+        .view-btn {background: #3498db;color:white;}
+        .audit-btn {background: #27ae60;color:white;}
+        .img-btn {background: #9b59b6;color:white; margin-top:5px;} /* 新增：图片按钮紫色区分 */
+        .feedback-item p {line-height:1.6;margin:8px 0;}
+        h2 {text-align:center;color:#e74c3c;margin-bottom:20px;}
+        /* 视频弹窗样式 不变 */
+        #videoModal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 9999;
+            padding: 20px;
+        }
+        #videoModal .modal-content {
+            max-width: 800px;
+            margin: 50px auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        #modalVideoPlayer {
+            width: 100%;
+            max-height: 400px;
+            margin: 20px 0;
+        }
+        /* 新增：图片预览弹窗样式（和视频弹窗同风格） */
+        #imgModal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.9);
+            z-index: 9999;
+            padding: 20px;
+        }
+        #imgModal .modal-content {
+            max-width: 900px;
+            margin: 50px auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        #modalImg {
+            max-width: 100%;
+            max-height: 70vh;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .loading-text {color: #666;font-style: italic;}
+        .error-text {color: #e74c3c;}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>🔍 视频审核反馈处理后台</h2>
+        <div id="feedbackList">加载中...</div>
+    </div>
+
+    <!-- 视频预览弹窗 (原有 无修改) -->
+    <div id="videoModal">
+        <div class="modal-content">
+            <h3 style="text-align: center; color: #e74c3c;">原视频预览</h3>
+            <video id="modalVideoPlayer" controls controlsList="nodownload">
+                您的浏览器不支持视频播放，请使用Chrome/Firefox/Edge
+            </video>
+            <div style="margin: 20px 0; line-height: 1.8;">
+                <p><strong>视频分辨率:</strong> <span id="modalVideoResolution" class="loading-text">加载中...</span></p>
+                <p><strong>视频时长:</strong> <span id="modalVideoDuration" class="loading-text">加载中...</span></p>
+            </div>
+            <button onclick="closeVideo()" style="background: #e74c3c; color: white; padding: 8px 20px; border-radius: 4px;">
+                关闭预览
+            </button>
+        </div>
+    </div>
+
+    <!-- 新增：图片证据预览弹窗 -->
+    <div id="imgModal">
+        <div class="modal-content">
+            <h3 style="text-align: center; color: #9b59b6;">反馈证据图片</h3>
+            <img id="modalImg" alt="反馈证据图片">
+            <button onclick="closeImgModal()" style="background: #e74c3c; color: white; padding: 8px 20px; border-radius: 4px;">
+                关闭图片
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // 1. 加载反馈列表【核心修改：增加图片证据按钮渲染】
+        async function loadFeedbacks() {
+            const feedbackList = document.getElementById("feedbackList");
+            try {
+                const res = await fetch('/get-feedback-list');
+                const result = await res.json();
+                if (result.success && result.feedbacks.length > 0) {
+                    feedbackList.innerHTML = "";
+                    result.feedbacks.forEach(feedback => {
+                        // 判断当前反馈是否有上传图片证据
+                        const hasImg = feedback.feedback_img && feedback.feedback_img.trim() !== "";
+                        feedbackList.innerHTML += `
+                            <div class="feedback-item">
+                                <p><strong>反馈ID:</strong> ${feedback.feedback_id}</p>
+                                <p><strong>视频ID:</strong> ${feedback.video_id}</p>
+                                ${feedback.frame_index ? `<p><strong>帧索引:</strong> ${feedback.frame_index}</p>` : ""}
+                                <p><strong>反馈类型:</strong> ${feedback.feedback_type === "frame" ? "帧解读反馈" : "整体风险评估反馈"}</p>
+                                <p><strong>反馈理由:</strong> ${feedback.feedback_reason}</p>
+                                <p><strong>详细说明:</strong> ${feedback.feedback_desc}</p>
+                                <p><strong>反馈时间:</strong> ${feedback.feedback_time}</p>
+                                <p><strong>审核状态:</strong> <span class="${feedback.status}">${feedback.status === "pending" ? "✅ 待审核" : "✅ 已完成"}</span></p>
+                                <button class="view-btn" onclick="viewVideo('${feedback.video_id}')">查看原视频</button>
+                                <button class="audit-btn" onclick="openAuditForm('${feedback.feedback_id}')">处理该反馈</button>
+                                <!-- 核心新增：有图片就显示【查看证据图片】按钮 -->
+                                ${hasImg ? `<button class="img-btn" onclick="viewFeedbackImg('${feedback.feedback_img}')">查看证据图片</button>` : ''}
+                            </div>
+                        `;
+                    });
+                } else {
+                    feedbackList.innerHTML = "<p style='text-align:center;font-size:16px;'>暂无待处理的反馈数据</p>";
+                }
+            } catch (err) {
+                feedbackList.innerHTML = `<p style='color:red;text-align:center;'>加载失败：${err.message}</p>`;
+            }
+        }
+
+        // 2. 查看视频（原有 无修改，已修复多次预览问题）
+        async function viewVideo(videoId) {
+            const modal = document.getElementById('videoModal');
+            const videoPlayer = document.getElementById('modalVideoPlayer');
+            const resElem = document.getElementById('modalVideoResolution');
+            const durElem = document.getElementById('modalVideoDuration');
+
+            resElem.textContent = "加载中...";
+            durElem.textContent = "加载中...";
+            modal.style.display = 'block';
+
+            try {
+                const res = await fetch(`/get-video-info?video_id=${videoId}`);
+                const { success, video_info } = await res.json();
+                if (!success) {
+                    alert(`视频不存在：${video_info?.message || '未知错误'}`);
+                    closeVideo();
+                    return;
+                }
+                videoPlayer.src = video_info.url;
+                videoPlayer.onloadedmetadata = () => {
+                    resElem.textContent = `${videoPlayer.videoWidth}×${videoPlayer.videoHeight}`;
+                    durElem.textContent = `${(videoPlayer.duration/60).toFixed(2)}分钟`;
+                    videoPlayer.play();
+                };
+            } catch (err) {
+                alert(`加载失败：${err.message}`);
+                closeVideo();
+            }
+        }
+
+        // 3. 关闭视频（原有 无修改，彻底释放资源）
+        function closeVideo() {
+            const videoPlayer = document.getElementById('modalVideoPlayer');
+            videoPlayer.pause();
+            videoPlayer.src = "";
+            videoPlayer.removeAttribute('src');
+            videoPlayer.load();
+            document.getElementById('videoModal').style.display = 'none';
+        }
+
+        // ========== 核心新增：4. 查看反馈的证据图片 ==========
+        function viewFeedbackImg(imgBase64) {
+            const imgModal = document.getElementById('imgModal');
+            const modalImg = document.getElementById('modalImg');
+            // Base64直接赋值给img标签即可显示
+            modalImg.src = imgBase64;
+            imgModal.style.display = 'block';
+        }
+
+        // ========== 核心新增：5. 关闭图片弹窗，释放图片资源 ==========
+        function closeImgModal() {
+            const imgModal = document.getElementById('imgModal');
+            const modalImg = document.getElementById('modalImg');
+            // 清空图片src，释放内存
+            modalImg.src = "";
+            imgModal.style.display = 'none';
+        }
+
+        // 6. 处理审核（原有 无修改）
+        async function openAuditForm(feedbackId) {
+            try {
+                const res = await fetch(`/get-feedback?feedback_id=${feedbackId}`);
+                const { success, feedback } = await res.json();
+                if (!success) {
+                    alert("获取反馈失败：" + feedback?.message);
+                    return;
+                }
+                const level = prompt("风险等级（高/中/低）:", "中");
+                if(!['高','中','低'].includes(level)){
+                    alert("只能输入高/中/低");
+                    return;
+                }
+                const desc = prompt("审核说明:", feedback.risk_desc || "");
+                if (!level || !desc) return;
+
+                const submitRes = await fetch('/submit-re-audit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        feedback_id: feedbackId,
+                        re_audit_data: { status: "completed", re_audit_level: level, re_audit_desc: desc, re_audit_time: new Date().toLocaleString() }
+                    })
+                });
+                const submitResult = await submitRes.json();
+                if (submitResult.success) {
+                    alert("审核提交成功！");
+                    loadFeedbacks();
+                } else {
+                    alert("提交失败：" + submitResult.message);
+                }
+            } catch (err) {
+                alert("处理失败：" + err.message);
+            }
+        }
+
+        // 页面初始化
+        window.onload = () => {
+            loadFeedbacks();
+            setInterval(loadFeedbacks, 5000);
+        };
+    </script>
+</body>
+</html>

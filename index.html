@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AIGC视频审核系统</title>
+
+    <!-- 引入CSS文件 -->
+    <link rel="stylesheet" href="static/css/style.css">
+    <script src="static/js/chart.js-4.5.1/chart.umd.min.js"></script>
+    <!-- 添加调试样式 -->
+    <style>
+        .debug-info {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 9999;
+        }
+        .frame-desc-bubble {
+            position: absolute;
+            bottom: 80px;
+            right: 20px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            padding: 15px;
+            width: 320px;
+            z-index: 10;
+        }
+        .bubble-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #eee;
+        }
+        .bubble-title {
+            font-weight: bold;
+            color: #333;
+        }
+        .bubble-close {
+            background: transparent;
+            border: none;
+            font-size: 18px;
+            color: #999;
+            cursor: pointer;
+            padding: 0 5px;
+        }
+        .bubble-close:hover {
+            color: #e74c3c;
+        }
+        .small-spinner {
+            width: 20px;
+            height: 20px;
+            border-width: 2px;
+            margin: 0 auto;
+        }
+        .loading-spinner {
+            border: 4px solid rgba(97, 189, 249, 0.2);
+            border-top: 4px solid #61bdf9;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🎬 AIGC视频内容安全审核系统</h1>
+
+        <!-- 1. 视频上传区域 -->
+       <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data">
+    <div class="upload-area">
+        <h3>选择视频来源</h3>
+        <div style="margin-bottom: 20px; display: flex; justify-content: center; gap: 30px; font-size: 16px;">
+            <label class="radio-label">
+                <input type="radio" name="videoSource" value="local" checked onclick="toggleVideoSource(this)">
+                <span>本地视频文件</span>
+            </label>
+            <label class="radio-label">
+                <input type="radio" name="videoSource" value="url" onclick="toggleVideoSource(this)">
+                <span>网页视频URL</span>
+            </label>
+        </div>
+
+        <div class="file-input-wrapper" id="localFileArea">
+            <input type="file" name="video" id="videoFileInput" accept=".mp4,.avi,.mov,.mkv,.webm">
+            <label for="videoFileInput" class="file-input-label">
+                选择视频文件
+            </label>
+        </div>
+
+        <div id="videoUrlArea" style="display: none; margin: 20px 0;">
+            <input type="text" id="videoUrlInput" placeholder="请输入有效的视频URL（支持MP4/AVI/MOV/MKV/WebM）"
+                   style="width: 80%; padding: 12px 16px; border: 2px solid #61bdf9; border-radius: 8px; font-size: 14px; outline: none; transition: all 0.3s ease;">
+            <p style="margin-top: 8px; font-size: 12px; color: #7f8c8d;">支持直链视频URL，示例：https://xxx.com/test.mp4</p>
+        </div>
+
+        <div class="file-info" id="fileInfo">
+            支持格式: MP4, AVI, MOV, MKV, WebM | 最大大小: 500MB
+        </div>
+        <div style="margin-top: 20px;">
+            <button type="submit" class="btn" id="uploadBtn" disabled>
+                <span>⬆ 上传/获取视频</span>
+            </button>
+        </div>
+        <div id="localPreviewInfo" style="margin-top: 15px; display: none;">
+            <p style="color: #27ae60; font-size: 14px;">视频已选择，点击上方按钮上传</p>
+        </div>
+    </div>
+</form>
+
+        <!-- 2. 视频预览区 -->
+        <div class="video-container" id="videoPreviewArea">
+            <h3>📋 待检测视频预览</h3>
+            <video class="video-player" controls controlsList="nodownload" id="previewVideoPlayer">
+                您的浏览器不支持视频播放，请使用Chrome、Firefox或Edge等现代浏览器
+            </video>
+            <div class="video-info">
+                <img id="videoThumbnail" class="video-thumbnail" src="" alt="视频缩略图">
+                <div class="video-stats">
+                    <p><strong>视频名称:</strong> <span id="videoFileName">未选择</span></p>
+                    <p><strong>视频大小:</strong> <span id="videoFileSize">0 MB</span></p>
+                    <p><strong>视频时长:</strong> <span id="videoDuration">0:00</span></p>
+                    <p><strong>视频尺寸:</strong> <span id="videoDimensions">0×0</span></p>
+                </div>
+            </div>
+            <p class="video-tip">✅ 视频加载完成，支持播放/暂停/进度条/音量控制</p>
+            <div style="margin-top: 25px; display: flex; gap: 15px; justify-content: center;">
+                <button id="startAnalysisBtn" class="btn btn-analysis" disabled>
+                    <span>🚀 开始视频内容分析</span>
+                    <span class="status-indicator" id="analysisStatus" style="display: none;"></span>
+                </button>
+                <button id="resetBtn" class="btn"
+                    style="background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);">
+                    <span>🔄 重新选择视频</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 3. 进度条区域 -->
+        <div class="progress-section" id="progressArea">
+            <div class="progress-title" id="progressTitle">
+                <span>准备开始...</span>
+                <span class="status-indicator status-analyzing" id="progressStatus">分析中</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
+            </div>
+            <div class="progress-text" id="progressText">
+                <span>当前进度：0%</span>
+                <span style="margin-left: 20px;" id="performanceInfo"></span>
+            </div>
+        </div>
+
+        <!-- 停止分析按钮容器 -->
+        <div class="stop-analysis-container" id="stopAnalysisContainer">
+            <button id="stopAnalysisBtn" class="btn"
+                style="background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);">
+                <span>⏹️ 停止分析</span>
+            </button>
+        </div>
+
+        <!-- 4. 帧预览播放区 -->
+        <div class="frame-section" id="framePreviewArea">
+            <h3 class="frame-title">🎞️ 抽取帧预览（违规帧标记为红色）</h3>
+
+            <div class="frame-player">
+                <button class="frame-btn" id="prevFrameBtn" title="上一帧" disabled>◀</button>
+                <div class="frame-display">
+                    <img id="currentFrameImg" class="frame-img" src="" alt="当前帧">
+                    <div class="frame-tag tag-safe" id="frameTag">安全帧</div>
+                </div>
+                <button class="frame-btn" id="nextFrameBtn" title="下一帧" disabled>▶</button>
+                <button class="frame-btn" id="playFrameBtn" title="播放/暂停" disabled>▶️</button>
+            </div>
+
+            <div class="frame-list" id="frameList">
+                <div style="text-align: center; width: 100%; padding: 40px; color: #7f8c8d;">
+                    分析完成后，帧列表将显示在这里
+                </div>
+            </div>
+
+            <div class="frame-stats">
+                <div class="stat-item">
+                    <span class="stat-label">帧编号：</span>
+                    <span class="stat-value" id="frameIndex">0/0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">恐怖风险：</span>
+                    <span class="stat-value" id="frameHorror">0.00%</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">暴力风险：</span>
+                    <span class="stat-value" id="frameViolence">0.00%</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">色情风险：</span>
+                    <span class="stat-value" id="frameNsfw">0.000%</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">帧判定：</span>
+                    <span class="stat-value stat-safe" id="frameIsRisk">安全</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">推理耗时：</span>
+                    <span class="stat-value" id="frameSingleDuration">0.0000 秒</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 5. 结果汇总区 -->
+        <div class="result-section" id="resultArea">
+            <div class="result-card">
+                <h3 style="color: #27ae60; text-align: center; margin-bottom: 30px;">✅ 分析完成</h3>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h4>📊 总体评估</h4>
+                        <p><strong>风险等级:</strong> <span id="totalRiskLevel"
+                                style="font-size: 1.2em; font-weight: bold;">低风险</span></p>
+                        <p><strong>风险分数:</strong> <span id="totalRiskScore">0.0</span>/10</p>
+                        <p><strong>说明:</strong> <span id="totalRiskDesc">无风险</span></p>
+                        <div style="margin-top:15px;">
+                           <button class="btn" style="background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);" onclick="goToFeedbackForVideo()">
+                            <span>我要反馈</span>
+                           </button>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <h4>🔍 视频信息</h4>
+                        <p><strong>分辨率:</strong> <span id="videoResolution">0×0</span></p>
+                        <p><strong>时长:</strong> <span id="videoResultDuration">0.00</span>秒</p>
+                        <p><strong>帧率:</strong> <span id="videoFps">0.00</span></p>
+                    </div>
+                </div>
+                <!-- ========== 新增：人工审核结果展示区 ========== -->
+<!-- ========== 新增：人工审核结果展示区（带刷新按钮） ========== -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <h4>👤 人工审核结果</h4>
+        <p><strong>审核风险等级:</strong> <span id="reAuditLevel" style="font-size: 1.2em; font-weight: bold;">暂无</span></p>
+        <p><strong>审核说明:</strong> <span id="reAuditDesc">暂无人工审核</span></p>
+        <p><strong>审核时间:</strong> <span id="reAuditTime">暂无</span></p>
+        <!-- 新增：手动刷新按钮 -->
+        <button id="refreshReAuditBtn" class="btn" style="margin-top:10px; padding: 6px 12px; font-size: 12px; background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);">
+            🔄 刷新人工审核结果
+        </button>
+    </div>
+</div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h4>📈 分析统计</h4>
+                        <p><strong>总帧数:</strong> <span id="totalFrames">0</span></p>
+                        <p><strong>分析帧数:</strong> <span id="analyzedFrames">0</span></p>
+                        <p><strong>风险帧数:</strong> <span id="riskFrames">0</span></p>
+                        <p><strong>风险比例:</strong> <span id="riskRatio">0.00%</span></p>
+                    </div>
+                    <div class="stat-card">
+                        <h4>🚫 风险分析（三模型）</h4>
+                        <p><strong>平均恐怖风险:</strong> <span id="avgHorror">0.00</span></p>
+                        <p><strong>平均暴力风险:</strong> <span id="avgViolence">0.00</span></p>
+                        <p><strong>平均色情风险:</strong> <span id="avgNsfw">0.000</span></p>
+                    </div>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h4>⏱️ 性能统计</h4>
+                        <p><strong>总耗时:</strong> <span id="totalDuration">0.00</span>秒</p>
+                        <p><strong>推理耗时:</strong> <span id="inferDuration">0.00</span>秒</p>
+                        <p><strong>批次数量:</strong> <span id="batchCount">0</span></p>
+                        <p><strong>平均推理时间:</strong> <span id="avgInferTime">0.00</span>ms/帧</p>
+                    </div>
+                    <div class="stat-card">
+                        <h4>⚡ 速度统计</h4>
+                        <p><strong>推理FPS:</strong> <span id="inferenceFps">0.00</span> 帧/秒</p>
+                        <p><strong>整体FPS:</strong> <span id="overallFps">0.00</span> 帧/秒</p>
+                        <p><strong>批次效率:</strong> <span id="batchEfficiency">0.0</span>%</p>
+                        <p><strong>设备:</strong> <span id="deviceInfo">CPU</span></p>
+                    </div>
+                </div>
+
+                <div class="full-video-section" id="fullVideoSection">
+                    <h3 class="full-video-title">完整视频查看</h3>
+                    <div id="fullVideoLoading" class="video-loading">
+                        <div class="loading-spinner" style="width: 30px; height: 30px; border-width: 3px;"></div>
+                        <p style="margin-top: 10px;">正在加载完整视频...</p>
+                    </div>
+                    <div style="position: relative;">
+                        <video class="video-player" controls controlsList="nodownload" id="fullVideoPlayer">
+                        您的浏览器不支持视频播放，请使用Chrome、Firefox或Edge等现代浏览器
+                        </video>
+                        <div id="frameDescBubble" class="frame-desc-bubble" style="display: none;">
+                           <div class="bubble-header">
+                               <span class="bubble-title">帧内容解读</span>
+                               <button class="bubble-close" id="bubbleCloseBtn">×</button>
+                            </div>
+                            <div class="bubble-content" id="bubbleContent">
+                               <div class="loading-spinner small-spinner"></div>
+                                <p>正在解析帧内容...</p>
+                              </div>
+                        </div>
+                    </div>
+                    <p class="video-tip" id="fullVideoTip" style="display: none;">完整视频加载完成，支持播放/暂停/进度条/音量控制</p>
+                     <div class="risk-chart-container">
+                        <h4>时序风险波动图</h4>
+                        <button id="analyzeTimelineFrameBtn" class="btn" style="margin-bottom: 15px; padding: 8px 16px; font-size: 14px; background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);" disabled>
+                          📝 解读当前选中帧
+                        </button>
+                        <div class="chart-scroll-wrapper">
+                            <canvas id="riskTimelineChart" class="chart-canvas"></canvas>
+                        </div>
+                    </div>
+                    <div class="risk-chart-container radar-container">
+                        <h4>风险类别雷达图</h4>
+                        <canvas id="riskCategoryChart" class="chart-canvas chart-canvas-radar"></canvas>
+                   </div>
+
+                    <div style="margin-top: 15px;">
+                        <button id="retryFullVideoBtn" class="btn"
+                            style="background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);">
+                            <span>重新加载视频</span>
+                        </button>
+                    </div>
+              </div>
+          </div>
+        </div>
+
+        <!-- 6. 加载提示 -->
+        <div class="loading" id="loadingArea">
+            <p>⏳ 正在初始化分析，请稍候...</p>
+            <div class="loading-spinner"></div>
+        </div>
+
+        <!-- 7. 错误提示 -->
+        <div class="error-area" id="errorArea">
+            <div class="error-title">
+                <span>❌ 错误</span>
+            </div>
+            <div id="errorContent" style="line-height: 1.6; padding: 10px 0;"></div>
+            <div style="margin-top: 15px;">
+                <button id="retryBtn" class="btn" style="background: #95a5a6;">返回重试</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="static/js/初始化.js"></script>
+    <script src="static/js/上传视频.js"></script>
+    <script src="static/js/分析.js"></script>
+    <script src="static/js/检查.js"></script>
+
+    <script>
+        // 文件大小格式化工具函数
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 MB';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
+}
+
+// 视频时长格式化工具函数 (支持 时:分:秒)
+function formatVideoDuration(seconds) {
+    if (isNaN(seconds) || seconds <= 0) return '00:00';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    return [h > 0 ? h : '', m, s].filter(v=>v!=='').map(v=>v.toString().padStart(2, '0')).join(':');
+}
+
+// 1. 切换视频来源逻辑
+function toggleVideoSource(radio) {
+    const localFileArea = document.getElementById('localFileArea');
+    const videoUrlArea = document.getElementById('videoUrlArea');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const videoFileInput = document.getElementById('videoFileInput');
+    const videoUrlInput = document.getElementById('videoUrlInput');
+
+    if (radio.value === 'local') {
+        localFileArea.style.display = 'block';
+        videoUrlArea.style.display = 'none';
+        uploadBtn.disabled = (videoFileInput.files.length === 0);
+    } else {
+        localFileArea.style.display = 'none';
+        videoUrlArea.style.display = 'block';
+        uploadBtn.disabled = (videoUrlInput.value.trim() === '');
+    }
+}
+
+// 监听本地文件选择事件，显示文件信息+启用按钮
+document.getElementById('videoFileInput').addEventListener('change', function() {
+    const uploadBtn = document.getElementById('uploadBtn');
+    const localPreviewInfo = document.getElementById('localPreviewInfo');
+    const videoFileName = document.getElementById('videoFileName');
+    const videoFileSize = document.getElementById('videoFileSize');
+
+    if (this.files.length > 0) {
+        const file = this.files[0];
+        uploadBtn.disabled = false;
+        localPreviewInfo.style.display = 'block';
+        videoFileName.textContent = file.name;
+        videoFileSize.textContent = formatFileSize(file.size);
+    } else {
+        uploadBtn.disabled = true;
+        localPreviewInfo.style.display = 'none';
+        videoFileName.textContent = '未选择';
+        videoFileSize.textContent = '0 MB';
+    }
+});
+
+// 2. 监听URL输入
+document.getElementById('videoUrlInput').addEventListener('input', function() {
+    const uploadBtn = document.getElementById('uploadBtn');
+    const isUrlSelected = document.querySelector('input[name="videoSource"][value="url"]').checked;
+
+    if (isUrlSelected) {
+        uploadBtn.disabled = (this.value.trim() === '');
+    }
+});
+
+// 3. 表单提交前增强验证（修复版：永远阻止原生提交）
+document.getElementById('uploadForm').addEventListener('submit', function(e) {
+    // ⭐ 关键修复：无条件阻止原生 form 提交
+    e.preventDefault();
+
+    const selectedSource = document.querySelector('input[name="videoSource"]:checked').value;
+    const videoFileInput = document.getElementById('videoFileInput');
+    const videoUrlInput = document.getElementById('videoUrlInput');
+
+    if (selectedSource === 'local' && videoFileInput.files.length === 0) {
+        alert('请先选择本地视频文件！');
+        return false;
+    }
+
+    if (selectedSource === 'url') {
+        const url = videoUrlInput.value.trim();
+        if (url === '') {
+            alert('请先输入有效的视频URL！');
+            return false;
+        }
+        if (!/^https?:\/\//i.test(url)) {
+            alert('视频URL格式错误！必须以 http:// 或 https:// 开头');
+            return false;
+        }
+    }
+
+    return false;
+});
+
+
+// ========== 修复：“我要反馈”的视频ID获取逻辑 ==========
+function goToFeedbackForVideo() {
+    // 优先从“开始分析”按钮的data-vid获取（上传后会设置），再取全局变量
+    const startBtn = document.getElementById('startAnalysisBtn');
+    const videoId = startBtn.dataset?.vid || window.currentVideoId || null;
+
+    if (!videoId) {
+        alert("⚠️ 请先完成视频上传和分析，再提交反馈！");
+        return;
+    }
+
+    let feedbackUrl = "feedback.html?video_id=" + encodeURIComponent(videoId);
+
+    const feedbackWin = window.open(
+        feedbackUrl,
+        "videoFeedback",
+        "width=1000,height=700,top=100,left=200,toolbar=no,menubar=no,scrollbars=yes,resizable=true"
+    );
+
+    // 反馈页关闭后刷新人工审核结果
+    const checkFeedbackClose = setInterval(() => {
+        if (feedbackWin.closed) {
+            clearInterval(checkFeedbackClose);
+            loadReAuditResult(videoId);
+        }
+    }, 1000);
+}
+
+// 5. 帧解读气泡关闭按钮事件
+document.getElementById('bubbleCloseBtn').addEventListener('click', function() {
+    document.getElementById('frameDescBubble').style.display = 'none';
+});
+
+// 6. 完整视频加载完成提示
+document.getElementById('fullVideoPlayer').addEventListener('loadedmetadata', function() {
+    document.getElementById('fullVideoLoading').style.display = 'none';
+    document.getElementById('fullVideoTip').style.display = 'block';
+});
+
+// ========== 修复：人工审核结果加载（与后端字段匹配） ==========
+function loadReAuditResult(videoId) {
+    if (!videoId) return;
+
+    // 显示加载中状态
+    const reAuditLevelEl = document.getElementById('reAuditLevel');
+    const reAuditDescEl = document.getElementById('reAuditDesc');
+    const reAuditTimeEl = document.getElementById('reAuditTime');
+    reAuditLevelEl.textContent = '加载中...';
+    reAuditLevelEl.style.color = '#f39c12';
+    reAuditDescEl.textContent = '正在获取最新审核结果...';
+    reAuditTimeEl.textContent = '——';
+
+    fetch(`/get-video-info?video_id=${encodeURIComponent(videoId)}`)
+        .then(res => res.json())
+        .then(result => {
+            if (result.success) {
+                const videoInfo = result.video_info;
+                const reAudit = videoInfo.re_audit_result || {};
+
+                // 情况1：未审核/审核中
+                if (reAudit.status !== 'completed') {
+                    reAuditLevelEl.textContent = '暂无';
+                    reAuditLevelEl.style.color = '#95a5a6';
+                    reAuditDescEl.textContent = '暂无人工审核（审核中/未审核）';
+                    reAuditTimeEl.textContent = '——';
+                    document.getElementById('reAuditNotice')?.remove();
+                    return;
+                }
+
+                // 情况2：审核完成，渲染结果
+                let levelColor = '#3498db'; // 低风险-蓝色
+                if (reAudit.risk_level === '高') levelColor = '#e74c3c'; // 高风险-红色
+                if (reAudit.risk_level === '中') levelColor = '#f39c12'; // 中风险-橙色
+
+                reAuditLevelEl.textContent = reAudit.risk_level || '未知';
+                reAuditLevelEl.style.color = levelColor;
+                reAuditDescEl.textContent = reAudit.desc || '无审核说明';
+                reAuditTimeEl.textContent = reAudit.audit_time || '未知时间';
+
+                // 显示审核完成提示
+                if (!document.getElementById('reAuditNotice')) {
+                    const notice = document.createElement('div');
+                    notice.id = 'reAuditNotice';
+                    notice.style.cssText = `
+                        color: #27ae60;
+                        font-weight: bold;
+                        font-size: 14px;
+                        margin-top: 10px;
+                        padding: 8px;
+                        background: rgba(39, 174, 96, 0.1);
+                        border-radius: 4px;
+                        text-align: center;
+                    `;
+                    notice.innerHTML = '✅ 人工审核已完成！结果已更新';
+                    reAuditDescEl.parentNode.appendChild(notice);
+                }
+            } else {
+                reAuditLevelEl.textContent = '暂无';
+                reAuditLevelEl.style.color = '#95a5a6';
+                reAuditDescEl.textContent = '获取审核结果失败，请点击刷新';
+                reAuditTimeEl.textContent = '——';
+            }
+        })
+        .catch(err => {
+            console.error('拉取人工审核结果失败：', err);
+            reAuditLevelEl.textContent = '暂无';
+            reAuditLevelEl.style.color = '#95a5a6';
+            reAuditDescEl.textContent = '网络错误，请刷新页面';
+            reAuditTimeEl.textContent = '——';
+        });
+}
+
+// 轮询检查人工审核结果（每10秒一次）
+let reAuditPollingTimer;
+function startReAuditPolling(videoId) {
+    if (!videoId || reAuditPollingTimer) return;
+    loadReAuditResult(videoId);
+    reAuditPollingTimer = setInterval(() => {
+        loadReAuditResult(videoId);
+    }, 10000);
+}
+
+// 停止轮询
+window.addEventListener('beforeunload', () => {
+    if (reAuditPollingTimer) clearInterval(reAuditPollingTimer);
+});
+
+// ========== 页面初始化 + 视频ID赋值 ==========
+window.addEventListener('DOMContentLoaded', function() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const videoId = urlParams.get('video_id');
+
+    // 审核端传入视频ID的情况
+    if (videoId) {
+        console.log('检测到审核端视频ID，自动加载：', videoId);
+        document.getElementById('uploadForm').style.display = 'none';
+        document.getElementById('videoPreviewArea').style.display = 'block';
+
+        fetch(`/get-video-info?video_id=${videoId}`)
+            .then(res => res.json())
+            .then(result => {
+                if (result.success) {
+                    const videoInfo = result.video_info;
+                    window.currentVideoId = videoId; // 赋值全局视频ID
+                    const startBtn = document.getElementById('startAnalysisBtn');
+                    startBtn.dataset.vid = videoId; // 设置按钮的data-vid
+                    startBtn.disabled = false;
+
+                    const previewPlayer = document.getElementById('previewVideoPlayer');
+                    previewPlayer.src = videoInfo.url;
+
+                    document.getElementById('videoFileName').textContent = videoInfo.original_name;
+                    document.getElementById('videoFileSize').textContent = formatFileSize(videoInfo.size || 0);
+
+                    previewPlayer.onloadedmetadata = function() {
+                        document.getElementById('videoDuration').textContent = formatVideoDuration(this.duration);
+                        document.getElementById('videoDimensions').textContent = `${this.videoWidth}×${this.videoHeight}`;
+                    };
+
+                    previewPlayer.onerror = function() {
+                        alert("视频加载失败，请检查视频地址是否有效！");
+                    };
+
+                    document.querySelector('.video-tip').textContent = '✅ 视频已从审核端请求加载完成';
+                    startReAuditPolling(videoId);
+                } else {
+                    alert('加载视频失败：' + result.message);
+                    document.getElementById('uploadForm').style.display = 'block';
+                    document.getElementById('videoPreviewArea').style.display = 'none';
+                }
+            })
+            .catch(err => {
+                alert('网络错误：无法加载视频 - ' + err.message);
+                document.getElementById('uploadForm').style.display = 'block';
+                document.getElementById('videoPreviewArea').style.display = 'none';
+            });
+    }
+
+    // 绑定刷新人工审核按钮
+    if (document.getElementById('refreshReAuditBtn')) {
+        document.getElementById('refreshReAuditBtn').addEventListener('click', function() {
+            const vid = document.getElementById('startAnalysisBtn').dataset?.vid || window.currentVideoId;
+            if (vid) {
+                loadReAuditResult(vid);
+                alert('已手动刷新人工审核结果！');
+            } else {
+                alert('暂无视频ID，请先完成视频分析！');
+            }
+        });
+    }
+});
+
+    </script>
+
+</body>
+</html>
